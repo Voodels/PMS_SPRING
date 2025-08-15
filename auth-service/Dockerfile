@@ -16,6 +16,7 @@ WORKDIR /app
 
 COPY --from=builder ./app/target/auth-service-0.0.1-SNAPSHOT.jar ./app.jar
 
-EXPOSE 4005
+# Internal app port (matches docker-compose SERVER_PORT)
+EXPOSE 3002
 
 ENTRYPOINT ["java", "-jar", "app.jar"]

@@ -16,7 +16,8 @@ WORKDIR /app
 
 COPY --from=builder ./app/target/billing-service-0.0.1-SNAPSHOT.jar ./app.jar
 
-EXPOSE 4001
+# REST and gRPC ports as used in docker-compose
+EXPOSE 5000
 EXPOSE 9001
 
 ENTRYPOINT ["java", "-jar", "app.jar"]

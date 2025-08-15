@@ -73,8 +73,8 @@ Thumbs.db
 
 # Docker
 /docker/
-/docker-compose.yml
-/docker-compose.override.yml
+# Track compose files in this repo
+# (remove the ignores so docker-compose.yml is versioned)
 
 # Kubernetes
 /k8s/

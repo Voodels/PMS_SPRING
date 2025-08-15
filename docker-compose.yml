@@ -1,0 +1,250 @@
+version: '3.8'
+
+services:
+  # PostgreSQL database for Patient Service
+  patient-service-db:
+    image: postgres:15
+    container_name: patient-service-db
+    environment:
+      POSTGRES_DB: db
+      POSTGRES_USER: admin_user
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - patient_service_data:/var/lib/postgresql/data
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin_user -d db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # PostgreSQL database for Auth Service
+  auth-service-db:
+    image: postgres:15
+    container_name: auth-service-db
+    environment:
+      POSTGRES_DB: db
+      POSTGRES_USER: admin_user
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5433:5432"
+    volumes:
+      - auth_service_data:/var/lib/postgresql/data
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin_user -d db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # PostgreSQL database for Billing Service
+  billing-service-db:
+    image: postgres:15
+    container_name: billing-service-db
+    environment:
+      POSTGRES_DB: db
+      POSTGRES_USER: admin_user
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5434:5432"
+    volumes:
+      - billing_service_data:/var/lib/postgresql/data
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin_user -d db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # Kafka
+  kafka:
+    image: bitnami/kafka:latest
+    container_name: kafka
+    ports:
+      - "9092:9092"
+      - "9094:9094"
+    environment:
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:9094
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 0@kafka:9093
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094
+      KAFKA_CFG_NODE_ID: 0
+      KAFKA_CFG_PROCESS_ROLES: controller,broker
+    volumes:
+      - kafka_data:/bitnami/kafka
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions.sh --bootstrap-server localhost:9092"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Auth Service
+  auth-service:
+    build:
+      context: ./auth-service
+      dockerfile: Dockerfile
+    container_name: auth-service
+    ports:
+      - "3002:3002"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://auth-service-db:5432/db
+      SPRING_DATASOURCE_USERNAME: admin_user
+      SPRING_DATASOURCE_PASSWORD: password
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SPRING_SQL_INIT_MODE: always
+      SERVER_PORT: 3002
+      JWT_SECRET: bXktdmVyeS1zZWN1cmUtc2VjcmV0LWtleS1mb3Itand0LXRva2Vucy1hdC1sZWFzdC0yNTYtYml0cy1sb25n
+      JWT_EXPIRATION: 86400000
+    depends_on:
+      auth-service-db:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 10s bash -c 'echo > /dev/tcp/localhost/3002' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # Patient Service
+  patient-service:
+    build:
+      context: ./patient-service
+      dockerfile: Dockerfile
+    container_name: patient-service
+    ports:
+      - "4000:4000"
+      - "5005:5005"  # Debug port
+    environment:
+      JAVA_TOOL_OPTIONS: -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005
+      SPRING_DATASOURCE_URL: jdbc:postgresql://patient-service-db:5432/db
+      SPRING_DATASOURCE_USERNAME: admin_user
+      SPRING_DATASOURCE_PASSWORD: password
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SPRING_SQL_INIT_MODE: always
+      BILLING_SERVICE_ADDRESS: billing-service
+      BILLING_SERVICE_GRPC_PORT: 9001
+      SERVER_PORT: 4000
+    depends_on:
+      patient-service-db:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      billing-service:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 10s bash -c 'echo > /dev/tcp/localhost/4000' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # Billing Service
+  billing-service:
+    build:
+      context: ./billing-service
+      dockerfile: Dockerfile
+    container_name: billing-service
+    ports:
+      - "5000:5000"
+      - "9005:9001"  # gRPC port (external:internal)
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://billing-service-db:5432/db
+      SPRING_DATASOURCE_USERNAME: admin_user
+      SPRING_DATASOURCE_PASSWORD: password
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SPRING_SQL_INIT_MODE: always
+      SERVER_PORT: 5000
+      GRPC_PORT: 9001
+    depends_on:
+      billing-service-db:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 10s bash -c 'echo > /dev/tcp/localhost/5000' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # Analytics Service
+  analytics-service:
+    build:
+      context: ./analytics-service
+      dockerfile: Dockerfile
+    container_name: analytics-service
+    ports:
+      - "6000:6000"
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SERVER_PORT: 6000
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 10s bash -c 'echo > /dev/tcp/localhost/6000' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # API Gateway
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    container_name: api-gateway
+    ports:
+      - "8081:8081"
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SERVER_PORT: 8081
+      AUTH_SERVICE_URL: http://auth-service:3002
+      PATIENT_SERVICE_URL: http://patient-service:4000
+      BILLING_SERVICE_URL: http://billing-service:5000
+      ANALYTICS_SERVICE_URL: http://analytics-service:6000
+    depends_on:
+      auth-service:
+        condition: service_healthy
+      patient-service:
+        condition: service_healthy
+      billing-service:
+        condition: service_healthy
+      analytics-service:
+        condition: service_healthy
+    networks:
+      - microservices-network
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 10s bash -c 'echo > /dev/tcp/localhost/8081' || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+volumes:
+  patient_service_data:
+  auth_service_data:
+  billing_service_data:
+  kafka_data:
+
+networks:
+  microservices-network:
+    driver: bridge
